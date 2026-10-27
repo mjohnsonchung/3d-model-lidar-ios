@@ -1,7 +1,6 @@
 name: Deploy viewer
+# Matt's copy is private, and GitHub Pages needs a paid plan for a private repo, so this runs only when started by hand.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
