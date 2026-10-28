@@ -1,0 +1,108 @@
+# Builds the iPhone app (apps/house-capture) on GitHub's own Mac, unsigned, for a Mac whose
+# macOS is too old for the current Xcode. Started by hand only. The .ipa goes on the release
+# "iphone-app" (replaced each run) and on the run itself; Sideloadly (Windows or Mac) signs it
+# with Matt's Apple ID and installs it on his iPhone. How: skills/room-scan in Matt's brain.
+# The compile fix below and the packaging steps follow DamienKA1/maison-lidar-ios-build.
+name: Build the iPhone app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to replace the release's .ipa
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the newest Xcode on the machine (Wes builds with Xcode 27)
+        run: |
+          set -euo pipefail
+          newest=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$newest/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      # GitHub's Xcode gives up type-checking this list ("unable to type-check this expression in
+      # reasonable time"). The fix is applied here, not committed, so Wes's updates merge cleanly;
+      # once his code changes, the step finds nothing to fix and moves on.
+      - name: Make the surface list's types explicit, for the compiler
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('apps/house-capture/HouseCapture/CoverageEngine.swift')
+          source = path.read_text()
+          old = '''      for (off, n, w, h, ax, ay) in [
+                  (y * d.y / 2, y, d.x, d.z, x, z),
+                  (z * d.z / 2, z, d.x, d.y, x, y), (-z * d.z / 2, -z, d.x, d.y, x, y),
+                  (x * d.x / 2, x, d.z, d.y, z, y), (-x * d.x / 2, -x, d.z, d.y, z, y),
+                ] {'''
+          new = '''      typealias Surface = (SIMD3<Float>, SIMD3<Float>, Float, Float, SIMD3<Float>, SIMD3<Float>)
+                var surfaces: [Surface] = []
+                surfaces.append((y * d.y / 2, y, d.x, d.z, x, z))
+                surfaces.append((z * d.z / 2, z, d.x, d.y, x, y))
+                surfaces.append((-z * d.z / 2, -z, d.x, d.y, x, y))
+                surfaces.append((x * d.x / 2, x, d.z, d.y, z, y))
+                surfaces.append((-x * d.x / 2, -x, d.z, d.y, z, y))
+                for (off, n, w, h, ax, ay) in surfaces {'''
+          count = source.count(old)
+          if count == 1:
+              path.write_text(source.replace(old, new))
+              print('Fixed the surface list in CoverageEngine.swift.')
+          else:
+              print(f'The surface list has changed upstream ({count} matches), so nothing was fixed.')
+          PY
+
+      - name: Build the Release app for an iPhone, unsigned
+        working-directory: apps/house-capture
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+          xcodebuild -project HouseCapture.xcodeproj \
+            -scheme HouseCapture \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/build" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Package the .ipa
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/build/Build/Products/Release-iphoneos/HouseCapture.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$APP/Info.plist")" = iPhoneOS
+          lipo "$APP/HouseCapture" -verify_arch arm64
+          mkdir -p package/Payload out
+          ditto "$APP" package/Payload/HouseCapture.app
+          (cd package && /usr/bin/zip -q -r ../out/HouseCapture-unsigned.ipa Payload)
+          {
+            echo "Built from $GITHUB_REPOSITORY at $GITHUB_SHA, run $GITHUB_RUN_ID."
+            xcodebuild -version | head -1
+            echo "Release, for iPhone, unsigned: sign and install it with Sideloadly and your Apple ID."
+            (cd out && shasum -a 256 HouseCapture-unsigned.ipa)
+          } > out/build-info.txt
+          cat out/build-info.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HouseCapture-unsigned
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Put the .ipa on the release "iphone-app"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release delete iphone-app --yes --cleanup-tag 2>/dev/null || true
+          gh release create iphone-app out/HouseCapture-unsigned.ipa out/build-info.txt \
+            --target "$GITHUB_SHA" --title "iPhone app (unsigned)" \
+            --notes "The 3D Model Anything iPhone app, built by the \"Build the iPhone app\" workflow (run $GITHUB_RUN_ID). Unsigned: Sideloadly signs it with your Apple ID and installs it. Replaced each time the workflow runs."
