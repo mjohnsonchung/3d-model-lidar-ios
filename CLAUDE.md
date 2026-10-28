@@ -9,7 +9,8 @@ For any agent working in this repo, `mjohnsonchung/3d-model-lidar-ios`. It's Mat
 Kept small, so Wes's updates merge cleanly:
 - The app's bundle ID is `com.mjohnsonchung.housecapture` (was `com.wesbos.housecapture`, in `apps/house-capture/project.yml` and its README). A bundle ID belongs to one Apple developer team, so Xcode can't sign Wes's for Matt's.
 - `.github/workflows/pages.yml` runs only when started by hand. GitHub Pages isn't set up for this copy, and it needs a paid plan if the repo goes private.
-- `.github/workflows/build-iphone-app.yml` (28 Oct 2026): builds the iPhone app unsigned on GitHub's Mac, started by hand, and puts `HouseCapture-unsigned.ipa` on the release `iphone-app`. Matt's Mac is too old for the current Xcode; Sideloadly signs the .ipa with his Apple ID and installs it. It applies the `CoverageEngine.swift` compile fix at build time only, so the source stays Wes's.
+- `.github/workflows/build-iphone-app.yml` (28 Oct 2026): builds the iPhone app unsigned on GitHub's Mac, started by hand, and puts `HouseCapture-unsigned.ipa` on the release `iphone-app`. It's the spare route: Sideloadly signs the .ipa with his Apple ID and installs it. Its compile fix finds nothing to change now that the fix below is in the source.
+- `apps/house-capture/HouseCapture/CoverageEngine.swift` (28 Oct 2026): the list of a box's five surfaces is built line by line with its types written out, because Xcode 26.5 on Matt's Intel Mac gave up on it ("unable to type-check this expression in reasonable time"). Same code, from DamienKA1/maison-lidar-ios-build. If Wes changes those lines, take his and check the app still builds.
 - This file.
 
 ## Getting Wes's updates

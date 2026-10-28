@@ -757,11 +757,14 @@ final class CoverageEngine: @unchecked Sendable {
       let x = simd_make_float3(t.columns.0), y = simd_make_float3(t.columns.1), z = simd_make_float3(t.columns.2)
       let c = simd_make_float3(t.columns.3)
       // top + four sides
-      for (off, n, w, h, ax, ay) in [
-        (y * d.y / 2, y, d.x, d.z, x, z),
-        (z * d.z / 2, z, d.x, d.y, x, y), (-z * d.z / 2, -z, d.x, d.y, x, y),
-        (x * d.x / 2, x, d.z, d.y, z, y), (-x * d.x / 2, -x, d.z, d.y, z, y),
-      ] {
+      typealias Surface = (SIMD3<Float>, SIMD3<Float>, Float, Float, SIMD3<Float>, SIMD3<Float>)
+      var surfaces: [Surface] = []
+      surfaces.append((y * d.y / 2, y, d.x, d.z, x, z))
+      surfaces.append((z * d.z / 2, z, d.x, d.y, x, y))
+      surfaces.append((-z * d.z / 2, -z, d.x, d.y, x, y))
+      surfaces.append((x * d.x / 2, x, d.z, d.y, z, y))
+      surfaces.append((-x * d.x / 2, -x, d.z, d.y, z, y))
+      for (off, n, w, h, ax, ay) in surfaces {
         var m = matrix_identity_float4x4
         m.columns.0 = SIMD4(ax, 0); m.columns.1 = SIMD4(ay, 0); m.columns.2 = SIMD4(n, 0); m.columns.3 = SIMD4(c + off, 1)
         surface(m, w, h, n)
