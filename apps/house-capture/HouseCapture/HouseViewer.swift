@@ -265,10 +265,16 @@ final class PreviewModel: ObservableObject {
           }
         }
         let pixelBudget = 48_000_000 / max(1, assets.count)
-        bakeLabel = "Adding photo detail to \(asset.room.name)"
         let mesh = asset.mesh, inside = asset.inside, outside = asset.outside
+        // every photo's view of each spot, averaged: what each photo's brightness is matched to
+        bakeLabel = "Matching photo brightness in \(asset.room.name)"
+        let consensus = await Task.detached(priority: .utility) {
+          VertexColorBaker.bake(mesh: mesh, photos: sessionPhotos, consensus: true, progress: { _, _ in }, isCancelled: { flag.isCancelled })?.rgba
+        }.value
+        guard !flag.isCancelled else { break }
+        bakeLabel = "Adding photo detail to \(asset.room.name)"
         let result = await Task.detached(priority: .utility) {
-          PhotoTextures.build(mesh: mesh, inside: inside, outside: outside, photos: sessionPhotos,
+          PhotoTextures.build(mesh: mesh, inside: inside, outside: outside, photos: sessionPhotos, consensus: consensus,
                               pixelBudget: pixelBudget, progress: { f in
             Task { @MainActor in
               guard !flag.isCancelled else { return }

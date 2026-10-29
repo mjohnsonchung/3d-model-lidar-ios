@@ -10,6 +10,8 @@ import simd
 /// doesn't get the chair's color), then for every vertex it can see, weigh the photo by how head-on and
 /// close it looked (pixels per meter), how sharp it was and how far from the frame edge the vertex is.
 /// Colors are blended in linear light with weight³, so the best photo dominates but seams stay soft.
+/// With `consensus`, the weight isn't cubed, so every photo that saw a spot counts: the result is the
+/// scan's average color there, which PhotoTextures levels each photo's brightness and tint against.
 /// Work is split into batches of photos × chunks of consecutive vertices (spatially coherent: one
 /// ARKit anchor after another), so chunks a photo can't see are skipped wholesale.
 ///
@@ -30,14 +32,14 @@ enum VertexColorBaker {
 
   /// `progress(fraction, colorsSoFar)`: colors are included about twice a second so the mesh can paint
   /// itself in. Called on the baking thread. Returns nil when cancelled.
-  static func bake(mesh: PLYMesh, photos: [PreviewPhoto],
+  static func bake(mesh: PLYMesh, photos: [PreviewPhoto], consensus: Bool = false,
                    progress: (Double, [UInt8]?) -> Void,
                    isCancelled: () -> Bool) -> Result? {
     mesh.positions.withUnsafeBufferPointer { pos in
       mesh.normals.withUnsafeBufferPointer { nor in
         mesh.indices.withUnsafeBufferPointer { idx in
           bake(n: mesh.vertexCount, faces: mesh.faceCount, pos: pos.baseAddress!, nor: nor.baseAddress!, idx: idx.baseAddress!,
-               photos: photos, progress: progress, isCancelled: isCancelled)
+               photos: photos, consensus: consensus, progress: progress, isCancelled: isCancelled)
         }
       }
     }
@@ -59,7 +61,8 @@ enum VertexColorBaker {
 
   @_optimize(speed)
   private static func bake(n: Int, faces: Int, pos: UnsafePointer<Float>, nor: UnsafePointer<Float>, idx: UnsafePointer<UInt32>,
-                           photos: [PreviewPhoto], progress: (Double, [UInt8]?) -> Void, isCancelled: () -> Bool) -> Result? {
+                           photos: [PreviewPhoto], consensus: Bool,
+                           progress: (Double, [UInt8]?) -> Void, isCancelled: () -> Bool) -> Result? {
     let t0 = CFAbsoluteTimeGetCurrent()
     let chunks = (n + chunkSize - 1) / chunkSize
     return withContext(n: n, faces: faces, pos: pos, nor: nor, idx: idx) { ctx in
@@ -92,7 +95,7 @@ enum VertexColorBaker {
             var c = g * 8
             let end = Swift.min(chunks, c + 8)
             while c < end {
-              for w in ready where w.visible[c] != 0 { accumulate(w, chunk: c, ctx, acc: acc) }
+              for w in ready where w.visible[c] != 0 { accumulate(w, chunk: c, ctx, acc: acc, consensus: consensus) }
               c += 1
             }
           }
@@ -403,7 +406,7 @@ enum VertexColorBaker {
   // MARK: - per vertex
 
   @_optimize(speed)
-  private static func accumulate(_ w: PhotoWork, chunk c: Int, _ ctx: Context, acc: UnsafeMutablePointer<Float>) {
+  private static func accumulate(_ w: PhotoWork, chunk c: Int, _ ctx: Context, acc: UnsafeMutablePointer<Float>, consensus: Bool) {
     let pos = ctx.pos, nor = ctx.nor, lin = ctx.toLinear
     let px = w.pixels, z = w.depth
     let m = w.m
@@ -451,7 +454,7 @@ enum VertexColorBaker {
       edge = edge * edge * (3 - 2 * edge)
       let density = fx * cosT / d / 1000 // ~1 at 1.3 m head-on
       let q = density * sharp * (0.05 + 0.95 * edge)
-      let weight = q * q * q
+      let weight = consensus ? q : q * q * q
       if weight <= 1e-7 { continue }
       // bilinear sample of the thumbnail
       var sx = u * s - 0.5, sy = v * s - 0.5
